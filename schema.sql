@@ -1,0 +1,25 @@
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT UNIQUE NOT NULL,
+    password TEXT NOT NULL,
+    is_admin INTEGER DEFAULT 0,
+    balance INTEGER DEFAULT 100000,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS deposits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    amount INTEGER,
+    method TEXT,
+    status TEXT DEFAULT 'pending',
+    external_id TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS games_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    game TEXT,
+    payload TEXT,
+    result TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);

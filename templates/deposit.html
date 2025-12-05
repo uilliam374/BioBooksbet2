@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card" style="max-width:520px;margin:auto">
+  <h2>Depósito</h2>
+  <div style="margin-top:12px">
+    <h3>PIX / Cartão (Stripe)</h3>
+    <label>Valor (R$)</label>
+    <input id="pixAmount" type="number" min="1" step="0.01" style="width:100%;padding:8px;border-radius:8px">
+    <button class="btn primary" id="createPix" style="margin-top:8px">Pagar com Stripe (PIX / Cartão)</button>
+  </div>
+  <div id="pixArea" style="margin-top:18px;display:none">
+    <div style="text-align:center">
+      <img id="pixQr" style="max-width:260px;border-radius:8px;box-shadow:0 8px 20px rgba(0,0,0,0.5)">
+      <p id="pixCode" style="word-break:break-all;color:#cfe3ff;margin-top:8px"></p>
+    </div>
+  </div>
+</div>
+<script>
+document.getElementById('createPix').addEventListener('click', async function(){
+  const amount = parseFloat(document.getElementById('pixAmount').value);
+  if(!amount || amount <= 0){ alert('Digite um valor válido'); return; }
+  const res = await fetch('/stripe/create-checkout-session', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({amount: amount})
+  });
+  const j = await res.json();
+  if(j.checkout_url){
+    window.location = j.checkout_url;
+    return;
+  }
+  if(j.error){
+    alert('Erro: ' + j.error);
+    return;
+  }
+  if(j.qr_base64){
+    document.getElementById('pixArea').style.display = 'block';
+    document.getElementById('pixQr').src = 'data:image/png;base64,' + j.qr_base64;
+    document.getElementById('pixCode').innerText = j.qr_text || '';
+  }
+});
+</script>
+{% endblock %}
