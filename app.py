@@ -108,8 +108,61 @@ def health():
 # =========================================================
 # MAIN
 # =========================================================
+from werkzeug.security import generate_password_hash
+import psycopg2
+import os
+
+def create_admin_if_not_exists():
+    database_url = os.environ.get("DATABASE_URL")
+    if not database_url:
+        print("DATABASE_URL não definida")
+        return
+
+    try:
+        conn = psycopg2.connect(database_url)
+        cur = conn.cursor()
+
+        # Verifica se a tabela users existe
+        cur.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_name = 'users'
+            );
+        """)
+        table_exists = cur.fetchone()[0]
+
+        if not table_exists:
+            print("Tabela users não existe")
+            return
+
+        # Verifica se já existe admin
+        cur.execute("SELECT id FROM users WHERE is_admin = TRUE LIMIT 1;")
+        admin = cur.fetchone()
+
+        if admin:
+            print("Admin já existe, não será criado novamente")
+            return
+
+        # Cria admin
+        email = "admin@admin.com"
+        password = generate_password_hash("admin123")
+
+        cur.execute("""
+            INSERT INTO users (email, password, balance, is_admin)
+            VALUES (%s, %s, %s, %s)
+        """, (email, password, 0, True))
+
+        conn.commit()
+        print("Admin criado com sucesso")
+
+        cur.close()
+        conn.close()
+
+    except Exception as e:
+        print("Erro ao criar admin:", e)
 
 if __name__ == "__main__":
+    create_admin_if_not_exists()
     app.run(host="0.0.0.0", port=5000)
 
 @app.route("/create-admin")
