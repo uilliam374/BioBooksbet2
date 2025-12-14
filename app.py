@@ -1,52 +1,58 @@
 import os
-import json
-from flask import Flask, render_template, request, redirect, url_for, session, jsonify
 import psycopg
-import requests
-from werkzeug.security import generate_password_hash, check_password_hash
+from flask import Flask, render_template, request, redirect, url_for, session, jsonify
 
-# ==============================
+# =========================================================
 # CONFIGURAÇÃO BÁSICA
-# ==============================
+# =========================================================
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "dev_secret_key")
+app.secret_key = os.environ.get("SECRET_KEY", "dev")
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
-# GhostsPay
+# =========================================================
+# GHOSTSPAY (ENV VARS)
+# =========================================================
+
 GHOSTSPAY_API_KEY = os.environ.get("GHOSTSPAY_API_KEY")
 GHOSTSPAY_COMPANY_ID = os.environ.get("GHOSTSPAY_COMPANY_ID")
 GHOSTSPAY_WEBHOOK_SECRET = os.environ.get("GHOSTSPAY_WEBHOOK_SECRET")
 
-INIT_DB = os.environ.get("INIT_DB", "false").lower() == "true"
-
-# ==============================
-# CONEXÃO COM O BANCO
-# ==============================
+# =========================================================
+# DATABASE (psycopg v3)
+# =========================================================
 
 def get_db():
-    return psycopg.connect(DATABASE_URL)
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL não configurada")
+    return psycopg.connect(DATABASE_URL, sslmode="require")
 
-# ==============================
-# INIT DB (RODA APENAS 1 VEZ)
-# ==============================
+# =========================================================
+# INIT DB (opcional – só se INIT_DB=true)
+# =========================================================
+
+INIT_DB = os.environ.get("INIT_DB", "false").lower() == "true"
 
 def init_db():
-    with open("schema.sql", "r", encoding="utf-8") as f:
-        schema = f.read()
-
     with get_db() as conn:
         with conn.cursor() as cur:
-            cur.execute(schema)
-        conn.commit()
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id SERIAL PRIMARY KEY,
+                    username TEXT UNIQUE NOT NULL,
+                    password TEXT NOT NULL,
+                    balance NUMERIC DEFAULT 0
+                );
+            """)
+            conn.commit()
 
 if INIT_DB:
     init_db()
 
-# ==============================
-# ROTAS PRINCIPAIS
-# ==============================
+# =========================================================
+# ROTAS
+# =========================================================
 
 @app.route("/")
 def index():
@@ -54,47 +60,25 @@ def index():
         return redirect(url_for("login"))
     return render_template("index.html")
 
-# ==============================
-# AUTH
-# ==============================
-
-@app.route("/register", methods=["GET", "POST"])
-def register():
-    if request.method == "POST":
-        email = request.form["email"]
-        password = generate_password_hash(request.form["password"])
-
-        with get_db() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO users (email, password, balance) VALUES (%s, %s, 0)",
-                    (email, password),
-                )
-            conn.commit()
-
-        return redirect(url_for("login"))
-
-    return render_template("register.html")
-
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
-        email = request.form["email"]
+        username = request.form["username"]
         password = request.form["password"]
 
         with get_db() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT id, password FROM users WHERE email = %s",
-                    (email,),
+                    "SELECT id FROM users WHERE username=%s AND password=%s",
+                    (username, password)
                 )
                 user = cur.fetchone()
 
-        if user and check_password_hash(user[1], password):
+        if user:
             session["user_id"] = user[0]
             return redirect(url_for("index"))
 
-        return "Login inválido", 401
+        return "Login inválido"
 
     return render_template("login.html")
 
@@ -103,84 +87,30 @@ def logout():
     session.clear()
     return redirect(url_for("login"))
 
-# ==============================
-# DEPÓSITO (GhostsPay)
-# ==============================
+# =========================================================
+# GHOSTSPAY – EXEMPLO DE ENDPOINT
+# =========================================================
 
-@app.route("/deposit", methods=["GET", "POST"])
-def deposit():
-    if "user_id" not in session:
-        return redirect(url_for("login"))
-
-    if request.method == "POST":
-        amount = float(request.form["amount"])
-
-        payload = {
-            "amount": amount,
-            "company_id": GHOSTSPAY_COMPANY_ID,
-            "description": "Depósito Cassino",
-        }
-
-        headers = {
-            "Authorization": f"Bearer {GHOSTSPAY_API_KEY}",
-            "Content-Type": "application/json",
-        }
-
-        response = requests.post(
-            "https://api.ghostspay.com/v1/payments",
-            headers=headers,
-            json=payload,
-            timeout=30,
-        )
-
-        data = response.json()
-        return redirect(data["payment_url"])
-
-    return render_template("deposit.html")
-
-# ==============================
-# WEBHOOK GhostsPay
-# ==============================
-
-@app.route("/webhook/ghostspay", methods=["POST"])
-def ghosts_pay_webhook():
-    signature = request.headers.get("X-Signature")
-
-    if signature != GHOSTSPAY_WEBHOOK_SECRET:
-        return "Unauthorized", 401
-
-    event = request.json
-
-    if event.get("status") == "paid":
-        user_id = event["metadata"]["user_id"]
-        amount = float(event["amount"])
-
-        with get_db() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "UPDATE users SET balance = balance + %s WHERE id = %s",
-                    (amount, user_id),
-                )
-            conn.commit()
-
+@app.route("/ghostspay/webhook", methods=["POST"])
+def ghostspay_webhook():
+    data = request.json
+    # Aqui você valida assinatura e processa pagamento
     return jsonify({"status": "ok"})
 
-# ==============================
-# JOGOS (EXEMPLO)
-# ==============================
+# =========================================================
+# HEALTHCHECK (RENDER)
+# =========================================================
 
-@app.route("/game/<name>")
-def game(name):
-    if "user_id" not in session:
-        return redirect(url_for("login"))
+@app.route("/health")
+def health():
+    return "OK", 200
 
-    return render_template(f"game_{name}.html")
-
-# ==============================
-# START
-# ==============================
+# =========================================================
+# MAIN
+# =========================================================
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+
 
 
