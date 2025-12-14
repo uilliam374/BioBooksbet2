@@ -112,5 +112,31 @@ def health():
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
 
+@app.route("/create-admin")
+def create_admin():
+    from werkzeug.security import generate_password_hash
+    from models import User, db
+
+    # MUDE ESSES DADOS AGORA
+    username = "admin"
+    email = "admin@admin.com"
+    password = "7D"
+
+    # verifica se já existe admin
+    existing = User.query.filter_by(username=username).first()
+    if existing:
+        return "Admin já existe", 400
+
+    admin = User(
+        username=username,
+        email=email,
+        password_hash=generate_password_hash(password),
+        is_admin=True
+    )
+
+    db.session.add(admin)
+    db.session.commit()
+
+    return "Admin criado com sucesso"
 
 
