@@ -1,6 +1,7 @@
 import os
 import psycopg
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify
+from werkzeug.security import generate_password_hash, check_password_hash
 
 # =========================================================
 # CONFIGURAÇÃO BÁSICA
@@ -10,6 +11,7 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev")
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
+INIT_DB = os.environ.get("INIT_DB", "false").lower() == "true"
 
 # =========================================================
 # GHOSTSPAY (ENV VARS)
@@ -29,10 +31,8 @@ def get_db():
     return psycopg.connect(DATABASE_URL, sslmode="require")
 
 # =========================================================
-# INIT DB (opcional – só se INIT_DB=true)
+# INIT DB + ADMIN (RODA SÓ SE INIT_DB=true)
 # =========================================================
-
-INIT_DB = os.environ.get("INIT_DB", "false").lower() == "true"
 
 def init_db():
     with get_db() as conn:
@@ -47,8 +47,31 @@ def init_db():
             """)
             conn.commit()
 
+def create_admin_if_not_exists():
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM users WHERE username = %s",
+                ("admin",)
+            )
+            exists = cur.fetchone()
+
+            if exists:
+                return
+
+            cur.execute("""
+                INSERT INTO users (username, password, balance)
+                VALUES (%s, %s, %s)
+            """, (
+                "admin",
+                generate_password_hash("7D"),
+                0
+            ))
+            conn.commit()
+
 if INIT_DB:
     init_db()
+    create_admin_if_not_exists()
 
 # =========================================================
 # ROTAS
@@ -69,16 +92,16 @@ def login():
         with get_db() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT id FROM users WHERE username=%s AND password=%s",
-                    (username, password)
+                    "SELECT id, password FROM users WHERE username = %s",
+                    (username,)
                 )
                 user = cur.fetchone()
 
-        if user:
+        if user and check_password_hash(user[1], password):
             session["user_id"] = user[0]
             return redirect(url_for("index"))
 
-        return "Login inválido"
+        return "Login inválido", 401
 
     return render_template("login.html")
 
@@ -88,13 +111,16 @@ def logout():
     return redirect(url_for("login"))
 
 # =========================================================
-# GHOSTSPAY – EXEMPLO DE ENDPOINT
+# GHOSTSPAY – WEBHOOK
 # =========================================================
 
-@app.route("/ghostspay/webhook", methods=["POST"])
+@app.route("/webhook/ghostspay", methods=["POST"])
 def ghostspay_webhook():
     data = request.json
-    # Aqui você valida assinatura e processa pagamento
+
+    # 👉 Aqui você valida assinatura usando GHOSTSPAY_WEBHOOK_SECRET
+    # 👉 Depois processa pagamento, atualiza saldo etc.
+
     return jsonify({"status": "ok"})
 
 # =========================================================
@@ -104,92 +130,3 @@ def ghostspay_webhook():
 @app.route("/health")
 def health():
     return "OK", 200
-
-# =========================================================
-# MAIN
-# =========================================================
-from werkzeug.security import generate_password_hash
-import psycopg2
-import os
-
-def create_admin_if_not_exists():
-    database_url = os.environ.get("DATABASE_URL")
-    if not database_url:
-        print("DATABASE_URL não definida")
-        return
-
-    try:
-        conn = psycopg2.connect(database_url)
-        cur = conn.cursor()
-
-        # Verifica se a tabela users existe
-        cur.execute("""
-            SELECT EXISTS (
-                SELECT FROM information_schema.tables 
-                WHERE table_name = 'users'
-            );
-        """)
-        table_exists = cur.fetchone()[0]
-
-        if not table_exists:
-            print("Tabela users não existe")
-            return
-
-        # Verifica se já existe admin
-        cur.execute("SELECT id FROM users WHERE is_admin = TRUE LIMIT 1;")
-        admin = cur.fetchone()
-
-        if admin:
-            print("Admin já existe, não será criado novamente")
-            return
-
-        # Cria admin
-        email = "admin@admin.com"
-        password = generate_password_hash("admin123")
-
-        cur.execute("""
-            INSERT INTO users (email, password, balance, is_admin)
-            VALUES (%s, %s, %s, %s)
-        """, (email, password, 0, True))
-
-        conn.commit()
-        print("Admin criado com sucesso")
-
-        cur.close()
-        conn.close()
-
-    except Exception as e:
-        print("Erro ao criar admin:", e)
-
-if __name__ == "__main__":
-    create_admin_if_not_exists()
-    app.run(host="0.0.0.0", port=5000)
-
-@app.route("/create-admin")
-def create_admin():
-    from werkzeug.security import generate_password_hash
-    from models import User, db
-
-    # MUDE ESSES DADOS AGORA
-    username = "admin"
-    email = "admin@admin.com"
-    password = "7D"
-
-    # verifica se já existe admin
-    existing = User.query.filter_by(username=username).first()
-    if existing:
-        return "Admin já existe", 400
-
-    admin = User(
-        username=username,
-        email=email,
-        password_hash=generate_password_hash(password),
-        is_admin=True
-    )
-
-    db.session.add(admin)
-    db.session.commit()
-
-    return "Admin criado com sucesso"
-
-
